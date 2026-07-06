@@ -1,25 +1,25 @@
 import os
 import sys
+import re
 import time
-import requests
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTextEdit, QListWidget, QListWidgetItem,
-    QProgressBar, QFileDialog, QMessageBox,
+    QProgressBar, QMessageBox,
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtGui import QFont, QColor
 
 from utils.parser import get_page, parse_novel_name
-from utils.downloader import search_and_find_posts, fetch_posts, save_to_txt
+from utils.downloader import search_and_find_posts, fetch_and_save_all
 
 
 class CrawlerThread(QThread):
     """后台爬取线程"""
     log_signal = pyqtSignal(str)
     progress_signal = pyqtSignal(int, int)
-    finished_signal = pyqtSignal(list, str)
+    finished_signal = pyqtSignal(list, str, int)
     novel_info_signal = pyqtSignal(str, int, str)
 
     def __init__(self, mode, **kwargs):
@@ -35,8 +35,8 @@ class CrawlerThread(QThread):
         try:
             if self.mode == "search":
                 self._do_search()
-            elif self.mode == "crawl":
-                self._do_crawl()
+            elif self.mode == "download":
+                self._do_download()
         except Exception as e:
             self.log_signal.emit(f"[错误] {str(e)}")
 
@@ -69,24 +69,25 @@ class CrawlerThread(QThread):
         self.log_signal.emit(f"[成功] 共找到 {len(results)} 个帖子")
         self.log_signal.emit(f"[信息] 来源: {source}")
         self.novel_info_signal.emit(novel_name, len(results), source)
-        self.finished_signal.emit(results, source)
+        self.finished_signal.emit(results, source, 0)
 
-    def _do_crawl(self):
+    def _do_download(self):
         posts = self.kwargs.get("posts", [])
+        novel_name = self.kwargs.get("novel_name", "小说")
         if not posts:
-            self.log_signal.emit("[错误] 没有可爬取的帖子")
+            self.log_signal.emit("[错误] 没有可下载的帖子")
             return
 
         total = len(posts)
-        self.log_signal.emit(f"[信息] 开始爬取 {total} 个帖子...")
+        self.log_signal.emit(f"[信息] 开始下载 {total} 个帖子...")
         results = []
 
         for i, (title, url) in enumerate(posts, 1):
             if self._stop:
-                self.log_signal.emit("[信息] 用户取消爬取")
+                self.log_signal.emit("[信息] 用户取消下载")
                 break
 
-            self.log_signal.emit(f"[信息] ({i}/{total}) 正在爬取: {title[:50]}...")
+            self.log_signal.emit(f"[信息] ({i}/{total}) 正在下载: {title[:50]}...")
             try:
                 soup = get_page(url)
                 from utils.parser import parse_post_content
@@ -98,7 +99,7 @@ class CrawlerThread(QThread):
                 else:
                     self.log_signal.emit(f"[警告] 未获取到 {title[:50]} 的内容")
             except Exception as e:
-                self.log_signal.emit(f"[错误] 爬取 {title[:50]} 失败: {str(e)}")
+                self.log_signal.emit(f"[错误] 下载 {title[:50]} 失败: {str(e)}")
                 results.append((title, url, "", False))
 
             self.progress_signal.emit(i, total)
@@ -106,8 +107,20 @@ class CrawlerThread(QThread):
                 time.sleep(2)
 
         success_count = sum(1 for r in results if r[3])
-        self.log_signal.emit(f"[成功] 爬取完成! 成功 {success_count}/{len(results)}")
-        self.finished_signal.emit(results, "")
+        self.log_signal.emit(f"[成功] 下载完成! 成功 {success_count}/{len(results)}")
+
+        # 自动保存
+        self.log_signal.emit("[信息] 正在保存到 exe 同级目录...")
+        from utils.downloader import save_to_txt, get_exe_dir
+        exe_dir = get_exe_dir()
+        safe_name = re.sub(r'[\\/:*?"<>|\r\n]+', '', novel_name) or "小说"
+        filepath = os.path.join(exe_dir, f"{safe_name}.txt")
+        save_to_txt(results, filepath, novel_name)
+        file_size = os.path.getsize(filepath)
+        self.log_signal.emit(f"[成功] 已保存到: {filepath}")
+        self.log_signal.emit(f"[信息] 文件大小: {file_size / 1024:.1f} KB")
+
+        self.finished_signal.emit(results, filepath, file_size)
 
 
 class MainWindow(QMainWindow):
@@ -140,7 +153,7 @@ class MainWindow(QMainWindow):
         label = QLabel("帖子链接:")
         label.setFont(QFont("Microsoft YaHei", 11))
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("粘贴一个该小说的帖子链接，例如 https://www.cool18.com/bbs4/index.php?...")
+        self.url_input.setPlaceholderText("在此粘贴帖子链接，例如 https://www.cool18.com/bbs4/index.php?...")
         self.url_input.setFont(QFont("Consolas", 10))
         input_layout.addWidget(label)
         input_layout.addWidget(self.url_input)
@@ -149,15 +162,13 @@ class MainWindow(QMainWindow):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
         self.search_btn = QPushButton("搜索")
-        self.crawl_btn = QPushButton("爬取")
-        self.save_btn = QPushButton("保存")
+        self.download_btn = QPushButton("下载")
         self.stop_btn = QPushButton("停止")
-        for btn in [self.search_btn, self.crawl_btn, self.save_btn, self.stop_btn]:
+        for btn in [self.search_btn, self.download_btn, self.stop_btn]:
             btn.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-            btn.setFixedSize(100, 40)
+            btn.setFixedSize(120, 40)
             btn_layout.addWidget(btn)
-        self.crawl_btn.setEnabled(False)
-        self.save_btn.setEnabled(False)
+        self.download_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
         layout.addLayout(btn_layout)
 
@@ -197,8 +208,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(log_layout, stretch=1)
 
         self.search_btn.clicked.connect(self.on_search)
-        self.crawl_btn.clicked.connect(self.on_crawl)
-        self.save_btn.clicked.connect(self.on_save)
+        self.download_btn.clicked.connect(self.on_download)
         self.stop_btn.clicked.connect(self.on_stop)
 
     def _load_styles(self):
@@ -244,7 +254,7 @@ class MainWindow(QMainWindow):
             if source:
                 self.source_label.setText(f"章节来源: {source[:60]}")
 
-    def _on_search_finished(self, results, source):
+    def _on_search_finished(self, results, source, _):
         self.posts = results
         self.source_info = source
         self.search_btn.setEnabled(True)
@@ -255,26 +265,26 @@ class MainWindow(QMainWindow):
                 item = QListWidgetItem(f"[{i:02d}] {title[:80]}")
                 item.setData(Qt.ItemDataRole.UserRole, (title, url))
                 self.post_list.addItem(item)
-            self.crawl_btn.setEnabled(True)
+            self.download_btn.setEnabled(True)
 
-    def on_crawl(self):
+    def on_download(self):
         if not self.posts:
             QMessageBox.warning(self, "提示", "请先搜索小说")
             return
 
         self.post_list.clear()
         self.log_text.clear()
-        self._append_log("[信息] 开始批量爬取...")
-        self.crawl_btn.setEnabled(False)
+        self._append_log("[信息] 开始下载全部帖子...")
+        self.download_btn.setEnabled(False)
         self.search_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.progress_bar.setValue(0)
         self.crawled_results = []
 
-        self.crawler_thread = CrawlerThread(mode="crawl", posts=self.posts)
+        self.crawler_thread = CrawlerThread(mode="download", posts=self.posts, novel_name=self.novel_name)
         self.crawler_thread.log_signal.connect(self._append_log)
         self.crawler_thread.progress_signal.connect(self._on_progress)
-        self.crawler_thread.finished_signal.connect(self._on_crawl_finished)
+        self.crawler_thread.finished_signal.connect(self._on_download_finished)
         self.crawler_thread.start()
 
     def _on_progress(self, current, total):
@@ -286,12 +296,12 @@ class MainWindow(QMainWindow):
             for idx in range(current):
                 if idx < len(self.posts):
                     title = self.posts[idx][0]
-                    item = QListWidgetItem(f"[{idx+1:02d}] {title[:70]} [已爬取]")
+                    item = QListWidgetItem(f"[{idx+1:02d}] {title[:70]} [已下载]")
                     self.post_list.addItem(item)
 
-    def _on_crawl_finished(self, results, _):
+    def _on_download_finished(self, results, filepath, file_size):
         self.crawled_results = results
-        self.crawl_btn.setEnabled(False)
+        self.download_btn.setEnabled(False)
         self.search_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         success_count = sum(1 for r in results if r[3])
@@ -299,41 +309,18 @@ class MainWindow(QMainWindow):
 
         self.post_list.clear()
         for i, (title, url, content, success) in enumerate(results, 1):
-            status = "[已爬取]" if success else "[失败]"
+            status = "[已下载]" if success else "[失败]"
             item = QListWidgetItem(f"[{i:02d}] {title[:70]} {status}")
             color = QColor("#4caf50") if success else QColor("#f44336")
             item.setForeground(color)
             self.post_list.addItem(item)
 
-        self._append_log(f"[完成] 爬取完成! 成功: {success_count}, 失败: {fail_count}")
+        self._append_log(f"[完成] 下载完成! 成功: {success_count}, 失败: {fail_count}")
         if success_count > 0:
-            self.save_btn.setEnabled(True)
             self.info_label.setText(
                 f"小说名称: {self.novel_name} | 帖子数量: {len(results)} | 成功: {success_count}"
             )
-
-    def on_save(self):
-        if not self.crawled_results:
-            QMessageBox.warning(self, "提示", "没有可保存的内容")
-            return
-
-        filepath, _ = QFileDialog.getSaveFileName(
-            self,
-            "保存小说",
-            f"{self.novel_name}.txt",
-            "文本文件 (*.txt)",
-        )
-        if not filepath:
-            return
-
-        try:
-            save_to_txt(self.crawled_results, filepath, self.novel_name)
-            size = os.path.getsize(filepath)
-            self._append_log(f"[成功] 已保存到: {filepath}")
-            self._append_log(f"[信息] 文件大小: {size / 1024:.1f} KB")
-            QMessageBox.information(self, "成功", f"小说已保存到:\n{filepath}")
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"保存失败: {e}")
+            QMessageBox.information(self, "成功", f"小说已下载完成!\n\n共 {success_count} 个帖子\n文件大小: {file_size / 1024:.1f} KB\n\n保存到:\n{filepath}")
 
     def on_stop(self):
         if self.crawler_thread and self.crawler_thread.isRunning():

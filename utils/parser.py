@@ -72,7 +72,8 @@ def parse_post_links(soup, novel_name=""):
     """
     从帖子页面解析正文中包含的所有 tid= 链接。
     用于检测索引帖。
-    只保留章节链接（标题中包含章节编号的链接）
+    返回: [(显示文本, url), ...]
+    保留索引帖中的所有章节链接（包括特殊篇如"母亲节特别篇"）
     """
     content_el = soup.select_one(".post-content")
     if not content_el:
@@ -92,20 +93,6 @@ def parse_post_links(soup, novel_name=""):
             href = "https://www.cool18.com" + href if href.startswith("/") else "https://www.cool18.com/bbs4/" + href
         links.append((text, href))
     return links
-
-
-def is_chapter_link(text, novel_name=""):
-    """
-    判断链接是否为章节链接。
-    章节链接通常包含章节编号，如【我过分保守的妈妈】（58-63）
-    """
-    if not text:
-        return False
-    if re.search(r"[（(]\s*\d", text):
-        return True
-    if novel_name and novel_name in text:
-        return True
-    return False
 
 
 def is_index_post(post_links, threshold=5):

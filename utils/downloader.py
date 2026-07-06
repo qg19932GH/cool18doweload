@@ -1,10 +1,10 @@
 import os
 import re
+import sys
 import time
 import requests
 from .parser import (
     get_page,
-    parse_novel_name,
     parse_post_content,
     parse_post_links,
     is_index_post,
@@ -20,7 +20,7 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
     多关键词搜索 + 索引帖检测。
     1. 用所有关键词搜索，合并去重
     2. 检查每个搜索结果是否为索引帖
-    3. 如果找到索引帖，从其内容中提取完整章节列表
+    3. 如果找到索引帖，从其内容中提取完整章节列表（保持索引帖原始顺序）
     """
     all_results = []
     seen_tids = set()
@@ -79,15 +79,13 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
 
     index_links = []
     index_source = None
-    from .parser import is_chapter_link
     for title, url in all_results:
         try:
             soup = get_page(url)
             post_links = parse_post_links(soup, novel_name)
-            chapter_links = [(t, u) for t, u in post_links if is_chapter_link(t, novel_name)]
-            if is_index_post(chapter_links, threshold=5):
+            if is_index_post(post_links, threshold=5):
                 seen_tids_local = set()
-                for _, u in chapter_links:
+                for _, u in post_links:
                     m = re.search(r"tid=(\d+)", u)
                     if m:
                         seen_tids_local.add(m.group(1))
@@ -95,13 +93,14 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
                 if log_callback:
                     log_callback(f"  发现索引帖: {title[:60]} (包含 {chapter_count} 个章节链接)")
                 if chapter_count > len(index_links):
-                    index_links = chapter_links
+                    index_links = post_links
                     index_source = title
         except Exception:
             continue
         time.sleep(1)
 
     if index_links:
+        # 保持索引帖原始顺序，不排序
         seen = set()
         unique_links = []
         for text, url in index_links:
@@ -110,13 +109,13 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
             if tid not in seen:
                 seen.add(tid)
                 unique_links.append((text, url))
-        unique_links.sort(key=lambda x: extract_sort_key(x[0]))
 
         max_ch = get_max_chapter(unique_links)
         if log_callback:
-            log_callback(f"  使用索引帖「{index_source[:40]}」作为章节来源")
+            log_callback(f"  使用索引帖「{index_source[:40]}」作为章节来源（保持原始顺序）")
             log_callback(f"  索引帖包含 {len(unique_links)} 个章节，最大章节: {max_ch}")
 
+        # 补充索引帖外的帖子（放在最后）
         index_tids = set(seen)
         for title, url in all_results:
             tid_match = re.search(r"tid=(\d+)", url)
@@ -124,10 +123,10 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
                 if log_callback:
                     log_callback(f"  索引帖外补充: {title[:60]}")
                 unique_links.append((title, url))
-        unique_links.sort(key=lambda x: extract_sort_key(x[0]))
 
         return unique_links, f"索引帖: {index_source}"
 
+    # 没有索引帖，按章节号排序
     all_results.sort(key=lambda x: extract_sort_key(x[0]))
     max_ch = get_max_chapter(all_results)
     if log_callback:
@@ -135,8 +134,8 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
     return all_results, f"搜索结果（最大章节: {max_ch}）"
 
 
-def fetch_posts(posts, log_callback=None, delay=2, max_retries=3):
-    """批量爬取帖子内容"""
+def fetch_and_save_all(posts, novel_name, log_callback=None, delay=2, max_retries=3):
+    """批量爬取所有章节并自动保存到 exe 同级目录"""
     results = []
     total = len(posts)
 
@@ -160,7 +159,20 @@ def fetch_posts(posts, log_callback=None, delay=2, max_retries=3):
         if i < total:
             time.sleep(delay)
 
-    return results
+    # 自动保存
+    exe_dir = get_exe_dir()
+    safe_name = re.sub(r'[\\/:*?"<>|\r\n]+', '', novel_name) or "小说"
+    filepath = os.path.join(exe_dir, f"{safe_name}.txt")
+    save_to_txt(results, filepath, novel_name)
+    file_size = os.path.getsize(filepath)
+    return results, filepath, file_size
+
+
+def get_exe_dir():
+    """获取 exe 所在目录（打包后）或当前工作目录（开发时）"""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.getcwd()
 
 
 def save_to_txt(results, filepath, novel_name=""):
