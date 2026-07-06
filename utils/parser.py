@@ -38,14 +38,12 @@ def extract_search_keywords(novel_name):
     """
     keywords = []
 
-    # 提取括号内的核心词: 情话（我过分保守的妈妈） -> 我过分保守的妈妈
     inner = re.search(r"（(.+?)）", novel_name)
     if inner:
         core = inner.group(1).strip()
         if core and len(core) >= 2:
             keywords.append(core)
 
-    # 去除常见前缀词: 情话、故事、小说、传奇、记 等
     clean = novel_name
     for prefix in ["情话", "故事", "小说", "传奇", "记"]:
         if clean.startswith(prefix):
@@ -53,7 +51,6 @@ def extract_search_keywords(novel_name):
             if clean and clean not in keywords:
                 keywords.append(clean)
 
-    # 始终添加完整名称作为兜底
     if novel_name not in keywords:
         keywords.append(novel_name)
 
@@ -71,9 +68,62 @@ def parse_post_content(soup):
     return "\n".join(lines)
 
 
-def parse_search_results(soup, novel_name):
+def parse_post_links(soup, novel_name=""):
     """
-    解析搜索页面，过滤出禁忌书屋版块中与该小说相关的帖子。
+    从帖子页面解析正文中包含的所有 tid= 链接。
+    用于检测索引帖。
+    只保留章节链接（标题中包含章节编号的链接）
+    """
+    content_el = soup.select_one(".post-content")
+    if not content_el:
+        return []
+    links = []
+    for a in content_el.find_all("a", href=True):
+        href = a["href"]
+        if "tid=" not in href:
+            continue
+        text = a.get_text(strip=True)
+        if not text or len(text) < 3:
+            continue
+        skip_words = ["返回", "主帖", "首页", "投票", "举报", "分享", "回复", "管理", "联系"]
+        if any(sw in text for sw in skip_words):
+            continue
+        if not href.startswith("http"):
+            href = "https://www.cool18.com" + href if href.startswith("/") else "https://www.cool18.com/bbs4/" + href
+        links.append((text, href))
+    return links
+
+
+def is_chapter_link(text, novel_name=""):
+    """
+    判断链接是否为章节链接。
+    章节链接通常包含章节编号，如【我过分保守的妈妈】（58-63）
+    """
+    if not text:
+        return False
+    if re.search(r"[（(]\s*\d", text):
+        return True
+    if novel_name and novel_name in text:
+        return True
+    return False
+
+
+def is_index_post(post_links, threshold=5):
+    """
+    判断帖子是否为索引帖（包含多个章节链接）。
+    """
+    seen_tids = set()
+    for _, url in post_links:
+        tid_match = re.search(r"tid=(\d+)", url)
+        if tid_match:
+            seen_tids.add(tid_match.group(1))
+    return len(seen_tids) >= threshold
+
+
+def parse_search_results(soup, keywords):
+    """
+    解析搜索页面，过滤出禁忌书屋版块的帖子。
+    使用关键词列表进行匹配，任一关键词命中即可。
     返回: [(标题, url, 排序键), ...]
     """
     results = []
@@ -92,7 +142,14 @@ def parse_search_results(soup, novel_name):
 
         if "禁忌书屋" not in section:
             continue
-        if novel_name not in title:
+
+        # 任一关键词命中即可
+        matched = False
+        for kw in keywords:
+            if kw in title:
+                matched = True
+                break
+        if not matched:
             continue
 
         if not href.startswith("http"):
@@ -111,16 +168,28 @@ def extract_sort_key(title):
     示例: 【情话（我过分保守的妈妈）】（64-66）作者：...
     返回: (起始章, 结束章)
     """
-    match = re.search(r"（\s*(\d+)\s*-\s*(\d+)\s*）", title)
+    match = re.search(r"[（(]\s*(\d+)\s*[-~]+\s*(\d+)\s*[）)]", title)
     if match:
         return (int(match.group(1)), int(match.group(2)))
-    match = re.search(r"\((\d+)\s*[-~]\s*(\d+)\)", title)
+    match = re.search(r"[（(]\s*(\d+)\s*[）)]", title)
     if match:
-        return (int(match.group(1)), int(match.group(2)))
+        return (int(match.group(1)), int(match.group(1)))
     match = re.search(r"(\d+)", title)
     if match:
         return (int(match.group(1)), int(match.group(1)))
     return (0, 0)
+
+
+def get_max_chapter(posts):
+    """
+    从帖子列表中获取最大章节号。
+    """
+    max_ch = 0
+    for title, _ in posts:
+        _, end = extract_sort_key(title)
+        if end > max_ch:
+            max_ch = end
+    return max_ch
 
 
 def parse_pagination(soup, base_url):

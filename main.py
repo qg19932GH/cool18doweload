@@ -1,6 +1,5 @@
 import os
 import sys
-import re
 import time
 import requests
 from PyQt6.QtWidgets import (
@@ -12,16 +11,16 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtGui import QFont, QColor
 
-from utils.parser import get_page, parse_novel_name, parse_post_content
-from utils.downloader import search_novel, fetch_posts, save_to_txt
+from utils.parser import get_page, parse_novel_name
+from utils.downloader import search_and_find_posts, fetch_posts, save_to_txt
 
 
 class CrawlerThread(QThread):
     """后台爬取线程"""
     log_signal = pyqtSignal(str)
     progress_signal = pyqtSignal(int, int)
-    finished_signal = pyqtSignal(list)
-    novel_info_signal = pyqtSignal(str, int)
+    finished_signal = pyqtSignal(list, str)
+    novel_info_signal = pyqtSignal(str, int, str)
 
     def __init__(self, mode, **kwargs):
         super().__init__()
@@ -58,18 +57,19 @@ class CrawlerThread(QThread):
 
         self.log_signal.emit(f"[信息] 小说名称: {novel_name}")
         self.log_signal.emit(f"[信息] 搜索关键词: {' / '.join(keywords)}")
-        self.novel_info_signal.emit(novel_name, 0)
+        self.novel_info_signal.emit(novel_name, 0, "")
 
-        self.log_signal.emit(f"[信息] 正在搜索小说「{novel_name}」的所有帖子...")
+        self.log_signal.emit(f"[信息] 正在搜索小说所有帖子...")
         try:
-            results = search_novel(novel_name, keywords, log_callback=self.log_signal.emit, delay=2)
+            results, source = search_and_find_posts(novel_name, keywords, log_callback=self.log_signal.emit, delay=2)
         except Exception as e:
             self.log_signal.emit(f"[错误] 搜索失败: {e}")
             return
 
-        self.log_signal.emit(f"[成功] 共找到 {len(results)} 个相关帖子")
-        self.novel_info_signal.emit(novel_name, len(results))
-        self.finished_signal.emit(results)
+        self.log_signal.emit(f"[成功] 共找到 {len(results)} 个帖子")
+        self.log_signal.emit(f"[信息] 来源: {source}")
+        self.novel_info_signal.emit(novel_name, len(results), source)
+        self.finished_signal.emit(results, source)
 
     def _do_crawl(self):
         posts = self.kwargs.get("posts", [])
@@ -89,6 +89,7 @@ class CrawlerThread(QThread):
             self.log_signal.emit(f"[信息] ({i}/{total}) 正在爬取: {title[:50]}...")
             try:
                 soup = get_page(url)
+                from utils.parser import parse_post_content
                 content = parse_post_content(soup)
                 success = bool(content)
                 results.append((title, url, content, success))
@@ -106,7 +107,7 @@ class CrawlerThread(QThread):
 
         success_count = sum(1 for r in results if r[3])
         self.log_signal.emit(f"[成功] 爬取完成! 成功 {success_count}/{len(results)}")
-        self.finished_signal.emit(results)
+        self.finished_signal.emit(results, "")
 
 
 class MainWindow(QMainWindow):
@@ -115,10 +116,11 @@ class MainWindow(QMainWindow):
         self.posts = []
         self.crawled_results = []
         self.novel_name = ""
+        self.source_info = ""
         self.crawler_thread = None
 
         self.setWindowTitle("酷18小说下载器")
-        self.setMinimumSize(800, 700)
+        self.setMinimumSize(850, 750)
         self._build_ui()
         self._load_styles()
 
@@ -129,13 +131,11 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        # 标题
         title = QLabel("酷18小说下载器")
         title.setFont(QFont("Microsoft YaHei", 20, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
-        # 链接输入
         input_layout = QHBoxLayout()
         label = QLabel("帖子链接:")
         label.setFont(QFont("Microsoft YaHei", 11))
@@ -146,7 +146,6 @@ class MainWindow(QMainWindow):
         input_layout.addWidget(self.url_input)
         layout.addLayout(input_layout)
 
-        # 按钮组
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
         self.search_btn = QPushButton("搜索")
@@ -162,14 +161,16 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(False)
         layout.addLayout(btn_layout)
 
-        # 信息栏
-        info_layout = QHBoxLayout()
-        self.info_label = QLabel("小说名称: 未搜索 | 帖子数量: 0")
+        info_layout = QVBoxLayout()
+        self.info_label = QLabel("小说名称: 未搜索")
         self.info_label.setFont(QFont("Microsoft YaHei", 11))
         info_layout.addWidget(self.info_label)
+        self.source_label = QLabel("")
+        self.source_label.setFont(QFont("Microsoft YaHei", 10))
+        self.source_label.setStyleSheet("color: #89b4fa;")
+        info_layout.addWidget(self.source_label)
         layout.addLayout(info_layout)
 
-        # 帖子列表
         list_layout = QVBoxLayout()
         list_label = QLabel("帖子列表:")
         list_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
@@ -179,14 +180,12 @@ class MainWindow(QMainWindow):
         list_layout.addWidget(self.post_list)
         layout.addLayout(list_layout, stretch=2)
 
-        # 进度条
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         layout.addWidget(self.progress_bar)
 
-        # 日志区
         log_layout = QVBoxLayout()
         log_label = QLabel("运行日志:")
         log_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
@@ -197,7 +196,6 @@ class MainWindow(QMainWindow):
         log_layout.addWidget(self.log_text, stretch=1)
         layout.addLayout(log_layout, stretch=1)
 
-        # 按钮连接
         self.search_btn.clicked.connect(self.on_search)
         self.crawl_btn.clicked.connect(self.on_crawl)
         self.save_btn.clicked.connect(self.on_save)
@@ -231,23 +229,24 @@ class MainWindow(QMainWindow):
         self._append_log(f"[信息] 开始搜索: {url[:80]}...")
         self.search_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
+        self.post_list.clear()
 
-        self.crawler_thread = CrawlerThread(
-            mode="search",
-            url=url,
-        )
+        self.crawler_thread = CrawlerThread(mode="search", url=url)
         self.crawler_thread.log_signal.connect(self._append_log)
         self.crawler_thread.novel_info_signal.connect(self._on_novel_info)
         self.crawler_thread.finished_signal.connect(self._on_search_finished)
         self.crawler_thread.start()
 
-    def _on_novel_info(self, novel_name, count):
+    def _on_novel_info(self, novel_name, count, source):
         self.novel_name = novel_name
         if count > 0:
             self.info_label.setText(f"小说名称: {novel_name} | 帖子数量: {count}")
+            if source:
+                self.source_label.setText(f"章节来源: {source[:60]}")
 
-    def _on_search_finished(self, results):
+    def _on_search_finished(self, results, source):
         self.posts = results
+        self.source_info = source
         self.search_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         if results:
@@ -272,10 +271,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.crawled_results = []
 
-        self.crawler_thread = CrawlerThread(
-            mode="crawl",
-            posts=self.posts,
-        )
+        self.crawler_thread = CrawlerThread(mode="crawl", posts=self.posts)
         self.crawler_thread.log_signal.connect(self._append_log)
         self.crawler_thread.progress_signal.connect(self._on_progress)
         self.crawler_thread.finished_signal.connect(self._on_crawl_finished)
@@ -293,7 +289,7 @@ class MainWindow(QMainWindow):
                     item = QListWidgetItem(f"[{idx+1:02d}] {title[:70]} [已爬取]")
                     self.post_list.addItem(item)
 
-    def _on_crawl_finished(self, results):
+    def _on_crawl_finished(self, results, _):
         self.crawled_results = results
         self.crawl_btn.setEnabled(False)
         self.search_btn.setEnabled(True)
@@ -331,7 +327,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            save_to_txt(self.crawled_results, filepath)
+            save_to_txt(self.crawled_results, filepath, self.novel_name)
             size = os.path.getsize(filepath)
             self._append_log(f"[成功] 已保存到: {filepath}")
             self._append_log(f"[信息] 文件大小: {size / 1024:.1f} KB")
