@@ -12,15 +12,13 @@ from .parser import (
     parse_pagination,
     extract_sort_key,
     get_max_chapter,
+    smart_sort_posts,
 )
 
 
 def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
     """
-    多关键词搜索 + 索引帖检测。
-    1. 用所有关键词搜索，合并去重
-    2. 检查每个搜索结果是否为索引帖
-    3. 如果找到索引帖，从其内容中提取完整章节列表（保持索引帖原始顺序）
+    多关键词搜索 + 索引帖检测 + 智能排序。
     """
     all_results = []
     seen_tids = set()
@@ -100,7 +98,7 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
         time.sleep(1)
 
     if index_links:
-        # 保持索引帖原始顺序，不排序
+        # 去重
         seen = set()
         unique_links = []
         for text, url in index_links:
@@ -112,10 +110,10 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
 
         max_ch = get_max_chapter(unique_links)
         if log_callback:
-            log_callback(f"  使用索引帖「{index_source[:40]}」作为章节来源（保持原始顺序）")
+            log_callback(f"  使用索引帖「{index_source[:40]}」作为章节来源")
             log_callback(f"  索引帖包含 {len(unique_links)} 个章节，最大章节: {max_ch}")
 
-        # 补充索引帖外的帖子（放在最后）
+        # 补充索引帖外的帖子
         index_tids = set(seen)
         for title, url in all_results:
             tid_match = re.search(r"tid=(\d+)", url)
@@ -124,14 +122,16 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
                     log_callback(f"  索引帖外补充: {title[:60]}")
                 unique_links.append((title, url))
 
-        return unique_links, f"索引帖: {index_source}"
+        # 智能排序
+        sorted_links = smart_sort_posts(unique_links, index_links)
+        return sorted_links, f"索引帖: {index_source}"
 
-    # 没有索引帖，按章节号排序
-    all_results.sort(key=lambda x: extract_sort_key(x[0]))
-    max_ch = get_max_chapter(all_results)
+    # 没有索引帖，智能排序
+    sorted_results = smart_sort_posts(all_results, None)
+    max_ch = get_max_chapter(sorted_results)
     if log_callback:
         log_callback(f"  未找到索引帖，使用搜索结果，最大章节: {max_ch}")
-    return all_results, f"搜索结果（最大章节: {max_ch}）"
+    return sorted_results, f"搜索结果（最大章节: {max_ch}）"
 
 
 def fetch_and_save_all(posts, novel_name, log_callback=None, delay=2, max_retries=3):

@@ -16,7 +16,6 @@ def get_page(url, timeout=15):
 def parse_novel_name(soup):
     """
     从帖子页面解析小说名称和搜索关键词。
-    标题示例: 【情话（我过分保守的妈妈）】（64-66）作者：小鹿不知归处（lzh1223）
     返回: (小说名, 完整标题, 关键词列表)
     """
     title_el = soup.select_one(".main-title")
@@ -31,10 +30,7 @@ def parse_novel_name(soup):
 
 def extract_search_keywords(novel_name):
     """
-    从小说名中提取多个搜索关键词，按优先级排序。
-    示例: "情话（我过分保守的妈妈）"
-    -> ["我过分保守的妈妈", "情话（我过分保守的妈妈）"]
-    策略: 先用短核心词搜索，再用完整名称搜索。
+    从小说名中提取多个搜索关键词。
     """
     keywords = []
 
@@ -71,7 +67,6 @@ def parse_post_content(soup):
 def parse_post_links(soup, novel_name=""):
     """
     从帖子页面解析正文中包含的所有 tid= 链接。
-    用于检测索引帖。
     返回: [(显示文本, url), ...]
     保留索引帖中的所有章节链接（包括特殊篇如"母亲节特别篇"）
     """
@@ -96,9 +91,7 @@ def parse_post_links(soup, novel_name=""):
 
 
 def is_index_post(post_links, threshold=5):
-    """
-    判断帖子是否为索引帖（包含多个章节链接）。
-    """
+    """判断帖子是否为索引帖（包含多个章节链接）"""
     seen_tids = set()
     for _, url in post_links:
         tid_match = re.search(r"tid=(\d+)", url)
@@ -110,8 +103,7 @@ def is_index_post(post_links, threshold=5):
 def parse_search_results(soup, keywords):
     """
     解析搜索页面，过滤出禁忌书屋版块的帖子。
-    使用关键词列表进行匹配，任一关键词命中即可。
-    返回: [(标题, url, 排序键), ...]
+    返回: [(标题, url), ...]
     """
     results = []
     items = soup.select(".search-content ul li a")
@@ -130,30 +122,21 @@ def parse_search_results(soup, keywords):
         if "禁忌书屋" not in section:
             continue
 
-        # 任一关键词命中即可
-        matched = False
-        for kw in keywords:
-            if kw in title:
-                matched = True
-                break
-        if not matched:
+        if not any(kw in title for kw in keywords):
             continue
 
         if not href.startswith("http"):
             href = "https://www.cool18.com" + href if href.startswith("/") else "https://www.cool18.com/bbs4/" + href
 
-        sort_key = extract_sort_key(title)
-        results.append((title, href, sort_key))
+        results.append((title, href))
 
-    results.sort(key=lambda x: x[2])
-    return [(t, u) for t, u, _ in results]
+    return results
 
 
 def extract_sort_key(title):
     """
-    从标题中提取章节编号范围，用于排序。
-    示例: 【情话（我过分保守的妈妈）】（64-66）作者：...
-    返回: (起始章, 结束章)
+    从标题中提取章节编号范围。
+    返回: (起始章, 结束章)，无编号返回 (None, None)
     """
     match = re.search(r"[（(]\s*(\d+)\s*[-~]+\s*(\d+)\s*[）)]", title)
     if match:
@@ -161,22 +144,94 @@ def extract_sort_key(title):
     match = re.search(r"[（(]\s*(\d+)\s*[）)]", title)
     if match:
         return (int(match.group(1)), int(match.group(1)))
-    match = re.search(r"(\d+)", title)
-    if match:
-        return (int(match.group(1)), int(match.group(1)))
-    return (0, 0)
+    return (None, None)
 
 
 def get_max_chapter(posts):
-    """
-    从帖子列表中获取最大章节号。
-    """
+    """从帖子列表中获取最大章节号"""
     max_ch = 0
     for title, _ in posts:
         _, end = extract_sort_key(title)
-        if end > max_ch:
+        if end is not None and end > max_ch:
             max_ch = end
     return max_ch
+
+
+def smart_sort_posts(posts, index_links=None):
+    """
+    智能排序帖子：
+    1. 有编号的按章节号从小到大排序
+    2. 索引帖中的无编号章节，根据索引帖中它前面的章节编号插入正确位置
+    3. 搜索结果单独出现的无编号章节，放最后
+    """
+    # 构建索引帖的顺序映射
+    index_tids = set()
+    # 记录每个 tid 在索引帖中的位置（前面最后一个编号章节的结束编号）
+    special_chapter_info = {}  # tid -> (标题, url, 前面的结束编号)
+
+    if index_links:
+        prev_end = 0
+        for text, url in index_links:
+            tid_match = re.search(r"tid=(\d+)", url)
+            if not tid_match:
+                continue
+            tid = tid_match.group(1)
+            index_tids.add(tid)
+
+            start_ch, end_ch = extract_sort_key(text)
+            if start_ch is not None:
+                # 有编号
+                prev_end = end_ch
+            else:
+                # 无编号（特殊章节），记录前面的编号
+                special_chapter_info[tid] = (text, url, prev_end)
+
+    # 分类帖子
+    numbered_posts = []  # (标题, url, 起始章, 结束章)
+    special_posts = []   # (标题, url, 应该插入的编号)
+    extra_posts = []     # (标题, url)
+
+    for title, url in posts:
+        tid_match = re.search(r"tid=(\d+)", url)
+        tid = tid_match.group(1) if tid_match else None
+        start_ch, end_ch = extract_sort_key(title)
+
+        if start_ch is not None:
+            numbered_posts.append((title, url, start_ch, end_ch))
+        elif tid and tid in special_chapter_info:
+            # 索引帖中的无编号章节
+            info = special_chapter_info[tid]
+            special_posts.append((title, url, info[2]))  # 前面的结束编号
+        else:
+            # 搜索结果单独出现的无编号章节
+            extra_posts.append((title, url))
+
+    # 有编号的按章节号排序
+    numbered_posts.sort(key=lambda x: x[2])
+
+    # 合并：先放编号章节，再插入无编号章节到正确位置
+    result = []
+    special_inserted = set()
+
+    for i, (title, url, start_ch, end_ch) in enumerate(numbered_posts):
+        # 先插入应该在此章节之前的特殊章节
+        for s_title, s_url, insert_after in special_posts:
+            if insert_after < start_ch and s_title not in [r[0] for r in result]:
+                result.append((s_title, s_url))
+                special_inserted.add(s_title)
+        result.append((title, url))
+
+    # 剩余未插入的特殊章节（应该在最后）
+    for s_title, s_url, _ in special_posts:
+        if s_title not in special_inserted:
+            result.append((s_title, s_url))
+
+    # 搜索结果单独出现的无编号放最后
+    for e_title, e_url in extra_posts:
+        if e_title not in [r[0] for r in result]:
+            result.append((e_title, e_url))
+
+    return result
 
 
 def parse_pagination(soup, base_url):
