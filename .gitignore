@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.exe
+*.spec
+dist/
+build/
+*.txt
+!requirements.txt
+*.html
+*.md
+!TASK_PLAN.md
+!README.md
+.env
+.venv/
