@@ -70,9 +70,20 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2, prox
     if not all_results:
         return [], "搜索无结果"
 
-    # 检测索引帖
+    # 检测索引帖（优化：按章节起始号排序，索引帖通常是最早发布的帖子）
     if log_callback:
         log_callback(f"  正在检测索引帖（共 {len(all_results)} 个帖子）...")
+
+    # 索引帖特征：章节起始号最小（最早发布）且包含大量其他章节链接
+    # 按起始章节号排序，优先检查早期帖子
+    def index_priority(title):
+        """返回优先级（越小越优先）"""
+        s, e = extract_sort_key(title)
+        if s is not None:
+            return (0, s)  # 有编号的，按起始章节排序
+        return (1, 0)  # 无编号的放后面
+
+    sorted_candidates = sorted(all_results, key=lambda x: index_priority(x[0]))
 
     index_links = []
     index_source = None
@@ -80,7 +91,15 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2, prox
     index_source_title = None
     index_source_content = None
     index_tid = None
-    for title, url in all_results:
+    best_count = 0
+
+    for title, url in sorted_candidates:
+        # 已找到包含大量章节的索引帖，后续不再检查
+        if best_count >= 10:
+            if log_callback:
+                log_callback(f"  索引帖已足够完整（{best_count} 章），跳过剩余候选")
+            break
+
         try:
             soup = get_page(url, proxy_port=proxy_port)
             post_links = parse_post_links(soup, novel_name)
@@ -101,9 +120,9 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2, prox
                     index_source_content = parse_post_content(soup)
                     tid_match = re.search(r"tid=(\d+)", url)
                     index_tid = tid_match.group(1) if tid_match else None
+                    best_count = chapter_count
         except Exception:
             continue
-        time.sleep(1)
 
     if index_links:
         # 索引帖链接按 tid 去重
