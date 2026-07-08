@@ -122,13 +122,40 @@ def parse_search_results(soup, keywords):
 
 def extract_sort_key(title):
     """从标题中提取章节编号范围，返回 (起始章, 结束章)，无编号返回 (None, None)"""
-    match = re.search(r"[（(]\s*(\d+)\s*[-~]+\s*(\d+)\s*[）)]", title)
+    half = fullwidth_to_half(title)
+    match = re.search(r"[（(]\s*(\d+)\s*[-~～]+\s*(\d+)\s*[）)]", half)
     if match:
         return (int(match.group(1)), int(match.group(2)))
-    match = re.search(r"[（(]\s*(\d+)\s*[）)]", title)
+    match = re.search(r"[（(]\s*(\d+)\s*[）)]", half)
     if match:
         return (int(match.group(1)), int(match.group(1)))
     return (None, None)
+
+
+def fullwidth_to_half(text):
+    """全角字符转半角（数字、括号、连字符等）"""
+    result = []
+    for ch in text:
+        if '\uff10' <= ch <= '\uff19':  # ０-９
+            result.append(chr(ord(ch) - ord('\uff10') + ord('0')))
+        elif ch == '\uff08':  # （
+            result.append('(')
+        elif ch == '\uff09':  # ）
+            result.append(')')
+        elif ch == '\u2014' or ch == '\u2013' or ch == '\uff0d':  # 各种破折号
+            result.append('-')
+        else:
+            result.append(ch)
+    return ''.join(result)
+
+
+def extract_content_chapter_range(content):
+    """从帖子正文第一行提取章节范围，用于索引帖自身章节号判断"""
+    if not content:
+        return (None, None)
+    first_line = content.split('\n')[0].strip()
+    # 从 "【我过分保守的妈妈】(01-05)" 这类格式提取
+    return extract_sort_key(first_line)
 
 
 def get_max_chapter(posts):

@@ -11,6 +11,7 @@ from .parser import (
     parse_search_results,
     parse_pagination,
     extract_sort_key,
+    extract_content_chapter_range,
     get_max_chapter,
     smart_sort_posts,
 )
@@ -77,6 +78,7 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2, prox
     index_source = None
     index_source_url = None
     index_source_title = None
+    index_source_content = None
     index_tid = None
     for title, url in all_results:
         try:
@@ -96,6 +98,7 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2, prox
                     index_source = title
                     index_source_url = url
                     index_source_title = title
+                    index_source_content = parse_post_content(soup)
                     tid_match = re.search(r"tid=(\d+)", url)
                     index_tid = tid_match.group(1) if tid_match else None
         except Exception:
@@ -129,8 +132,8 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2, prox
         for title, url in all_results:
             tid_match = re.search(r"tid=(\d+)", url)
             tid = tid_match.group(1) if tid_match else None
-            # 跳过已在索引帖中的 tid
-            if tid in index_tids:
+            # 跳过已在索引帖中的 tid，以及索引帖自己的 tid
+            if tid in index_tids or tid == index_tid:
                 continue
             # 跳过章节完全重叠的帖子
             start_ch, end_ch = extract_sort_key(title)
@@ -150,17 +153,30 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2, prox
             unique_index_links.append((title, url))
 
         # 将索引帖本身加入列表（索引帖自身可能包含章节内容，如 01-05）
-        index_start, index_end = extract_sort_key(index_source_title)
+        # 从正文第一行提取实际章节范围（索引帖标题可能是目录范围，正文才是实际内容）
+        content_range = extract_content_chapter_range(index_source_content)
+        if content_range[0] is not None:
+            # 用正文实际章节作为列表中的标题（用于排序/去重）
+            first_line = index_source_content.split('\n')[0].strip()
+            index_list_title = first_line
+        else:
+            content_range = extract_sort_key(index_source_title)
+            index_list_title = index_source_title
+
+        index_start, index_end = content_range
         index_included = False
         if index_start is not None:
             index_covered = all(ch in index_chapters for ch in range(index_start, index_end + 1))
             if not index_covered:
                 if log_callback:
                     log_callback(f"  索引帖自身包含未覆盖章节 {index_start}-{index_end}: {index_source_title[:60]}")
-                unique_index_links.append((index_source_title, index_source_url))
+                unique_index_links.append((index_list_title, index_source_url))
                 index_included = True
+            else:
+                if log_callback:
+                    log_callback(f"  索引帖自身章节 {index_start}-{index_end} 已被索引链接覆盖，跳过")
         else:
-            unique_index_links.append((index_source_title, index_source_url))
+            unique_index_links.append((index_list_title, index_source_url))
             index_included = True
 
         max_ch = get_max_chapter(unique_index_links)

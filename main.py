@@ -268,7 +268,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "链接格式不正确，请输入 cool18.com 的帖子链接")
             return
 
-        proxy_port = int(self.proxy_port_input.text()) if self.proxy_check.isChecked() else None
+        proxy_port = None
+        if self.proxy_check.isChecked():
+            port_text = self.proxy_port_input.text().strip()
+            try:
+                proxy_port = int(port_text) if port_text else None
+            except ValueError:
+                QMessageBox.warning(self, "提示", "代理端口必须是数字")
+                return
         self.log_text.clear()
         self._append_log(f"[信息] 开始搜索: {url[:80]}...")
         if proxy_port:
@@ -307,7 +314,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "请先搜索小说")
             return
 
-        proxy_port = int(self.proxy_port_input.text()) if self.proxy_check.isChecked() else None
+        proxy_port = None
+        if self.proxy_check.isChecked():
+            port_text = self.proxy_port_input.text().strip()
+            try:
+                proxy_port = int(port_text) if port_text else None
+            except ValueError:
+                QMessageBox.warning(self, "提示", "代理端口必须是数字")
+                return
         self.post_list.clear()
         self.log_text.clear()
         self._append_log("[信息] 开始下载全部帖子...")
