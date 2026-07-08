@@ -17,9 +17,7 @@ from .parser import (
 
 
 def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
-    """
-    多关键词搜索 + 索引帖检测 + 智能排序。
-    """
+    """多关键词搜索 + 索引帖检测 + 智能排序 + 去重"""
     all_results = []
     seen_tids = set()
 
@@ -77,6 +75,7 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
 
     index_links = []
     index_source = None
+    index_tid = None
     for title, url in all_results:
         try:
             soup = get_page(url)
@@ -93,44 +92,74 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
                 if chapter_count > len(index_links):
                     index_links = post_links
                     index_source = title
+                    tid_match = re.search(r"tid=(\d+)", url)
+                    index_tid = tid_match.group(1) if tid_match else None
         except Exception:
             continue
         time.sleep(1)
 
     if index_links:
-        # 去重
+        # 索引帖链接按 tid 去重
         seen = set()
-        unique_links = []
+        unique_index_links = []
         for text, url in index_links:
             tid_match = re.search(r"tid=(\d+)", url)
             tid = tid_match.group(1) if tid_match else url
             if tid not in seen:
                 seen.add(tid)
-                unique_links.append((text, url))
+                unique_index_links.append((text, url))
 
-        max_ch = get_max_chapter(unique_links)
         if log_callback:
             log_callback(f"  使用索引帖「{index_source[:40]}」作为章节来源")
-            log_callback(f"  索引帖包含 {len(unique_links)} 个章节，最大章节: {max_ch}")
+            log_callback(f"  索引帖包含 {len(unique_index_links)} 个章节链接")
 
-        # 补充索引帖外的帖子
+        # 补充索引帖外且章节不重叠的搜索帖子
         index_tids = set(seen)
+        index_chapters = set()
+        for text, url in unique_index_links:
+            start_ch, end_ch = extract_sort_key(text)
+            if start_ch is not None:
+                for ch in range(start_ch, end_ch + 1):
+                    index_chapters.add(ch)
+
         for title, url in all_results:
             tid_match = re.search(r"tid=(\d+)", url)
-            if tid_match and tid_match.group(1) not in index_tids:
-                if log_callback:
-                    log_callback(f"  索引帖外补充: {title[:60]}")
-                unique_links.append((title, url))
+            tid = tid_match.group(1) if tid_match else None
+            # 跳过已在索引帖中的 tid
+            if tid in index_tids:
+                continue
+            # 跳过章节完全重叠的帖子
+            start_ch, end_ch = extract_sort_key(title)
+            if start_ch is not None:
+                overlap = True
+                for ch in range(start_ch, end_ch + 1):
+                    if ch not in index_chapters:
+                        overlap = False
+                        break
+                if overlap:
+                    if log_callback:
+                        log_callback(f"  跳过章节重叠: {title[:60]}")
+                    continue
 
-        # 智能排序
-        sorted_links = smart_sort_posts(unique_links, index_links)
+            if log_callback:
+                log_callback(f"  补充帖子: {title[:60]}")
+            unique_index_links.append((title, url))
+
+        max_ch = get_max_chapter(unique_index_links)
+        if log_callback:
+            log_callback(f"  合并后共 {len(unique_index_links)} 个帖子，最大章节: {max_ch}")
+
+        # 智能排序 + 去重
+        sorted_links = smart_sort_posts(
+            unique_index_links, index_links, index_tid, novel_name
+        )
         return sorted_links, f"索引帖: {index_source}"
 
-    # 没有索引帖，智能排序
-    sorted_results = smart_sort_posts(all_results, None)
+    # 没有索引帖，直接使用搜索结果
+    sorted_results = smart_sort_posts(all_results, None, None, novel_name)
     max_ch = get_max_chapter(sorted_results)
     if log_callback:
-        log_callback(f"  未找到索引帖，使用搜索结果，最大章节: {max_ch}")
+        log_callback(f"  未找到索引帖，使用搜索结果，共 {len(sorted_results)} 个帖子，最大章节: {max_ch}")
     return sorted_results, f"搜索结果（最大章节: {max_ch}）"
 
 
