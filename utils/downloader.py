@@ -75,6 +75,8 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
 
     index_links = []
     index_source = None
+    index_source_url = None
+    index_source_title = None
     index_tid = None
     for title, url in all_results:
         try:
@@ -92,6 +94,8 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
                 if chapter_count > len(index_links):
                     index_links = post_links
                     index_source = title
+                    index_source_url = url
+                    index_source_title = title
                     tid_match = re.search(r"tid=(\d+)", url)
                     index_tid = tid_match.group(1) if tid_match else None
         except Exception:
@@ -145,13 +149,29 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
                 log_callback(f"  补充帖子: {title[:60]}")
             unique_index_links.append((title, url))
 
+        # 将索引帖本身加入列表（索引帖自身可能包含章节内容，如 01-05）
+        index_start, index_end = extract_sort_key(index_source_title)
+        index_included = False
+        if index_start is not None:
+            # 检查索引帖的章节是否已被链接覆盖
+            index_covered = all(ch in index_chapters for ch in range(index_start, index_end + 1))
+            if not index_covered:
+                if log_callback:
+                    log_callback(f"  索引帖自身包含未覆盖章节 {index_start}-{index_end}: {index_source_title[:60]}")
+                unique_index_links.append((index_source_title, index_source_url))
+                index_included = True
+        else:
+            unique_index_links.append((index_source_title, index_source_url))
+            index_included = True
+
         max_ch = get_max_chapter(unique_index_links)
         if log_callback:
             log_callback(f"  合并后共 {len(unique_index_links)} 个帖子，最大章节: {max_ch}")
 
-        # 智能排序 + 去重
+        # 智能排序 + 去重（如果索引帖已加入列表，不传入 index_tid 避免被排除）
+        sort_index_tid = None if index_included else index_tid
         sorted_links = smart_sort_posts(
-            unique_index_links, index_links, index_tid, novel_name
+            unique_index_links, index_links, sort_index_tid, novel_name
         )
         return sorted_links, f"索引帖: {index_source}"
 

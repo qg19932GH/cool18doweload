@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTextEdit, QListWidget, QListWidgetItem,
-    QProgressBar, QMessageBox,
+    QProgressBar, QMessageBox, QMenu,
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtGui import QFont, QColor
@@ -155,6 +155,8 @@ class MainWindow(QMainWindow):
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("在此粘贴帖子链接，例如 https://www.cool18.com/bbs4/index.php?...")
         self.url_input.setFont(QFont("Consolas", 10))
+        self.url_input.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.url_input.customContextMenuRequested.connect(self._url_input_context_menu)
         input_layout.addWidget(label)
         input_layout.addWidget(self.url_input)
         layout.addLayout(input_layout)
@@ -210,6 +212,22 @@ class MainWindow(QMainWindow):
         self.search_btn.clicked.connect(self.on_search)
         self.download_btn.clicked.connect(self.on_download)
         self.stop_btn.clicked.connect(self.on_stop)
+
+    def _url_input_context_menu(self, pos):
+        menu = QMenu(self)
+        action_undo = menu.addAction("撤销")
+        action_undo.triggered.connect(self.url_input.undo)
+        menu.addSeparator()
+        action_cut = menu.addAction("剪切")
+        action_cut.triggered.connect(self.url_input.cut)
+        action_copy = menu.addAction("复制")
+        action_copy.triggered.connect(self.url_input.copy)
+        action_paste = menu.addAction("粘贴")
+        action_paste.triggered.connect(self.url_input.paste)
+        menu.addSeparator()
+        action_select_all = menu.addAction("全选")
+        action_select_all.triggered.connect(self.url_input.selectAll)
+        menu.exec(self.url_input.mapToGlobal(pos))
 
     def _load_styles(self):
         try:
@@ -320,7 +338,7 @@ class MainWindow(QMainWindow):
             self.info_label.setText(
                 f"小说名称: {self.novel_name} | 帖子数量: {len(results)} | 成功: {success_count}"
             )
-            QMessageBox.information(self, "成功", f"小说已下载完成!\n\n共 {success_count} 个帖子\n文件大小: {file_size / 1024:.1f} KB\n\n保存到:\n{filepath}")
+            self._append_log(f"[信息] 文件已保存: {filepath}")
 
     def on_stop(self):
         if self.crawler_thread and self.crawler_thread.isRunning():
