@@ -3,12 +3,19 @@ import requests
 from bs4 import BeautifulSoup
 
 
-def get_page(url, timeout=15):
+def get_page(url, timeout=15, proxy_port=None):
     """请求页面并返回 BeautifulSoup 对象"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    resp = requests.get(url, headers=headers, timeout=timeout)
+    kwargs = {"url": url, "headers": headers, "timeout": timeout}
+    if proxy_port:
+        proxy_url = f"http://127.0.0.1:{proxy_port}"
+        kwargs["proxies"] = {
+            "http": proxy_url,
+            "https": proxy_url,
+        }
+    resp = requests.get(**kwargs)
     resp.encoding = "utf-8"
     return BeautifulSoup(resp.text, "html.parser")
 

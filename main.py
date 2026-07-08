@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTextEdit, QListWidget, QListWidgetItem,
-    QProgressBar, QMessageBox, QMenu,
+    QProgressBar, QMessageBox, QMenu, QCheckBox,
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtGui import QFont, QColor
@@ -25,6 +25,7 @@ class CrawlerThread(QThread):
     def __init__(self, mode, **kwargs):
         super().__init__()
         self.mode = mode
+        self.proxy_port = kwargs.get("proxy_port")
         self.kwargs = kwargs
         self._stop = False
 
@@ -44,7 +45,7 @@ class CrawlerThread(QThread):
         url = self.kwargs.get("url", "")
         self.log_signal.emit("[信息] 正在获取帖子页面...")
         try:
-            soup = get_page(url)
+            soup = get_page(url, proxy_port=self.proxy_port)
         except Exception as e:
             self.log_signal.emit(f"[错误] 获取页面失败: {e}")
             return
@@ -61,7 +62,7 @@ class CrawlerThread(QThread):
 
         self.log_signal.emit(f"[信息] 正在搜索小说所有帖子...")
         try:
-            results, source = search_and_find_posts(novel_name, keywords, log_callback=self.log_signal.emit, delay=2)
+            results, source = search_and_find_posts(novel_name, keywords, log_callback=self.log_signal.emit, delay=2, proxy_port=self.proxy_port)
         except Exception as e:
             self.log_signal.emit(f"[错误] 搜索失败: {e}")
             return
@@ -89,7 +90,7 @@ class CrawlerThread(QThread):
 
             self.log_signal.emit(f"[信息] ({i}/{total}) 正在下载: {title[:50]}...")
             try:
-                soup = get_page(url)
+                soup = get_page(url, proxy_port=self.proxy_port)
                 from utils.parser import parse_post_content
                 content = parse_post_content(soup)
                 success = bool(content)
@@ -172,6 +173,20 @@ class MainWindow(QMainWindow):
             btn_layout.addWidget(btn)
         self.download_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
+
+        # 代理开关
+        self.proxy_check = QCheckBox("使用代理")
+        self.proxy_check.setFont(QFont("Microsoft YaHei", 10))
+        btn_layout.addWidget(self.proxy_check)
+        self.proxy_port_input = QLineEdit("10808")
+        self.proxy_port_input.setPlaceholderText("代理端口")
+        self.proxy_port_input.setFont(QFont("Consolas", 10))
+        self.proxy_port_input.setFixedSize(80, 32)
+        btn_layout.addWidget(self.proxy_port_input)
+        proxy_label = QLabel("端口")
+        proxy_label.setFont(QFont("Microsoft YaHei", 10))
+        btn_layout.addWidget(proxy_label)
+
         layout.addLayout(btn_layout)
 
         info_layout = QVBoxLayout()
@@ -255,11 +270,14 @@ class MainWindow(QMainWindow):
 
         self.log_text.clear()
         self._append_log(f"[信息] 开始搜索: {url[:80]}...")
+        if proxy_port:
+            self._append_log(f"[信息] 已启用代理 127.0.0.1:{proxy_port}")
         self.search_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.post_list.clear()
 
-        self.crawler_thread = CrawlerThread(mode="search", url=url)
+        proxy_port = int(self.proxy_port_input.text()) if self.proxy_check.isChecked() else None
+        self.crawler_thread = CrawlerThread(mode="search", url=url, proxy_port=proxy_port)
         self.crawler_thread.log_signal.connect(self._append_log)
         self.crawler_thread.novel_info_signal.connect(self._on_novel_info)
         self.crawler_thread.finished_signal.connect(self._on_search_finished)
@@ -293,13 +311,16 @@ class MainWindow(QMainWindow):
         self.post_list.clear()
         self.log_text.clear()
         self._append_log("[信息] 开始下载全部帖子...")
+        if proxy_port:
+            self._append_log(f"[信息] 已启用代理 127.0.0.1:{proxy_port}")
         self.download_btn.setEnabled(False)
         self.search_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.progress_bar.setValue(0)
         self.crawled_results = []
 
-        self.crawler_thread = CrawlerThread(mode="download", posts=self.posts, novel_name=self.novel_name)
+        proxy_port = int(self.proxy_port_input.text()) if self.proxy_check.isChecked() else None
+        self.crawler_thread = CrawlerThread(mode="download", posts=self.posts, novel_name=self.novel_name, proxy_port=proxy_port)
         self.crawler_thread.log_signal.connect(self._append_log)
         self.crawler_thread.progress_signal.connect(self._on_progress)
         self.crawler_thread.finished_signal.connect(self._on_download_finished)

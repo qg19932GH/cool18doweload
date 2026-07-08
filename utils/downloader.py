@@ -16,7 +16,7 @@ from .parser import (
 )
 
 
-def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
+def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2, proxy_port=None):
     """多关键词搜索 + 索引帖检测 + 智能排序 + 去重"""
     all_results = []
     seen_tids = set()
@@ -30,7 +30,7 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
         first_url = f"https://www.cool18.com/search.php?keyword={keyword_encoded}&sa=全成人区搜索"
 
         try:
-            soup = get_page(first_url)
+            soup = get_page(first_url, proxy_port=proxy_port)
         except Exception as e:
             if log_callback:
                 log_callback(f"  关键词「{keyword}」搜索失败: {e}")
@@ -52,7 +52,7 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
             time.sleep(delay)
             page_url = f"https://www.cool18.com/search.php?keyword={keyword_encoded}&p={page}"
             try:
-                soup = get_page(page_url)
+                soup = get_page(page_url, proxy_port=proxy_port)
             except Exception:
                 break
             page_results = parse_search_results(soup, keywords)
@@ -80,7 +80,7 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
     index_tid = None
     for title, url in all_results:
         try:
-            soup = get_page(url)
+            soup = get_page(url, proxy_port=proxy_port)
             post_links = parse_post_links(soup, novel_name)
             if is_index_post(post_links, threshold=5):
                 seen_tids_local = set()
@@ -153,7 +153,6 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
         index_start, index_end = extract_sort_key(index_source_title)
         index_included = False
         if index_start is not None:
-            # 检查索引帖的章节是否已被链接覆盖
             index_covered = all(ch in index_chapters for ch in range(index_start, index_end + 1))
             if not index_covered:
                 if log_callback:
@@ -183,7 +182,7 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2):
     return sorted_results, f"搜索结果（最大章节: {max_ch}）"
 
 
-def fetch_and_save_all(posts, novel_name, log_callback=None, delay=2, max_retries=3):
+def fetch_and_save_all(posts, novel_name, log_callback=None, delay=2, max_retries=3, proxy_port=None):
     """批量爬取所有章节并自动保存到 exe 同级目录"""
     results = []
     total = len(posts)
@@ -194,7 +193,7 @@ def fetch_and_save_all(posts, novel_name, log_callback=None, delay=2, max_retrie
 
         for attempt in range(max_retries):
             try:
-                soup = get_page(url)
+                soup = get_page(url, proxy_port=proxy_port)
                 content = parse_post_content(soup)
                 if content:
                     success = True
