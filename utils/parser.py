@@ -205,17 +205,21 @@ def smart_dedup_posts(posts, index_tid=None):
             unnumbered.append((title, url))
 
     # Step 3: 有编号按起始章节排序，然后按覆盖范围去重
+    # 只有当帖子的整个范围都被已有帖子完全覆盖时才跳过
+    # 例如：已有 (70-71)，遇到 (71-73) → 72,73 是新的，保留
+    # 例如：已有 (70-75)，遇到 (71-73) → 完全覆盖，跳过
     numbered.sort(key=lambda x: (x[2], -x[3]))  # 按 start_ch 升序，end_ch 降序（长范围优先）
     deduped = []
     covered_until = -1  # 已覆盖到的最大章节号
 
     for title, url, start_ch, end_ch in numbered:
-        if start_ch <= covered_until:
-            # 起始章节已被覆盖，跳过
+        if start_ch <= covered_until and end_ch <= covered_until:
+            # 整个范围已被覆盖，跳过
             continue
-        # 保留这个帖子，更新覆盖范围
+        # 保留这个帖子（可能有新章节），更新覆盖范围
         deduped.append((title, url))
-        covered_until = end_ch
+        if end_ch > covered_until:
+            covered_until = end_ch
 
     # Step 4: 无编号章节按 tid 去重后保留
     deduped_unnumbered = []
