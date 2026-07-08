@@ -268,6 +268,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "链接格式不正确，请输入 cool18.com 的帖子链接")
             return
 
+        proxy_port = int(self.proxy_port_input.text()) if self.proxy_check.isChecked() else None
         self.log_text.clear()
         self._append_log(f"[信息] 开始搜索: {url[:80]}...")
         if proxy_port:
@@ -275,8 +276,6 @@ class MainWindow(QMainWindow):
         self.search_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.post_list.clear()
-
-        proxy_port = int(self.proxy_port_input.text()) if self.proxy_check.isChecked() else None
         self.crawler_thread = CrawlerThread(mode="search", url=url, proxy_port=proxy_port)
         self.crawler_thread.log_signal.connect(self._append_log)
         self.crawler_thread.novel_info_signal.connect(self._on_novel_info)
@@ -308,6 +307,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "请先搜索小说")
             return
 
+        proxy_port = int(self.proxy_port_input.text()) if self.proxy_check.isChecked() else None
         self.post_list.clear()
         self.log_text.clear()
         self._append_log("[信息] 开始下载全部帖子...")
@@ -318,8 +318,6 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(True)
         self.progress_bar.setValue(0)
         self.crawled_results = []
-
-        proxy_port = int(self.proxy_port_input.text()) if self.proxy_check.isChecked() else None
         self.crawler_thread = CrawlerThread(mode="download", posts=self.posts, novel_name=self.novel_name, proxy_port=proxy_port)
         self.crawler_thread.log_signal.connect(self._append_log)
         self.crawler_thread.progress_signal.connect(self._on_progress)
