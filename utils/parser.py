@@ -33,21 +33,34 @@ def parse_novel_name(soup):
 
 
 def extract_search_keywords(novel_name):
-    """从小说名中提取多个搜索关键词"""
+    """
+    从小说名中提取多个搜索关键词，覆盖不同标题变体
+    例：我跟妈妈的事情 → 我跟妈妈的事情, 我跟妈妈的事
+    例：情话（我过分保守的妈妈）→ 我过分保守的妈妈, 情话（我过分保守的妈妈）
+    """
     keywords = []
+    # 1. 括号核心词
     inner = re.search(r"（(.+?)）", novel_name)
     if inner:
         core = inner.group(1).strip()
         if core and len(core) >= 2:
             keywords.append(core)
+    # 2. 去掉前缀词
     clean = novel_name
     for prefix in ["情话", "故事", "小说", "传奇", "记"]:
         if clean.startswith(prefix):
             clean = clean[len(prefix):].strip("（）()")
             if clean and clean not in keywords:
                 keywords.append(clean)
+    # 3. 完整名称
     if novel_name not in keywords:
         keywords.append(novel_name)
+    # 4. 去掉结尾常见单字生成缩写变体（如"事情"→"事"）
+    # 只在没有括号时使用，避免截断括号内容
+    if "（" not in novel_name and len(novel_name) >= 4:
+        abbr = novel_name[:-1]  # 去掉最后一个字
+        if abbr and len(abbr) >= 3 and abbr not in keywords:
+            keywords.append(abbr)
     return keywords
 
 
@@ -208,17 +221,23 @@ def smart_dedup_posts(posts, index_tid=None):
     # 只有当帖子的整个范围都被已有帖子完全覆盖时才跳过
     # 例如：已有 (70-71)，遇到 (71-73) → 72,73 是新的，保留
     # 例如：已有 (70-75)，遇到 (71-73) → 完全覆盖，跳过
+    # 注意：跨度过大（>15章）的帖子通常是目录帖/索引帖，不能作为"覆盖源"
+    #       否则（1-22）会把所有章节都覆盖掉
+    MAX_COVERAGE_SPAN = 15  # 允许作为覆盖源的最大章节跨度
+
     numbered.sort(key=lambda x: (x[2], -x[3]))  # 按 start_ch 升序，end_ch 降序（长范围优先）
     deduped = []
-    covered_until = -1  # 已覆盖到的最大章节号
+    covered_until = -1  # 已覆盖到的最大章节号（只来自合理跨度的帖子）
 
     for title, url, start_ch, end_ch in numbered:
+        span = end_ch - start_ch
         if start_ch <= covered_until and end_ch <= covered_until:
-            # 整个范围已被覆盖，跳过
+            # 整个范围已被合理跨度的帖子覆盖，跳过
             continue
-        # 保留这个帖子（可能有新章节），更新覆盖范围
+        # 保留这个帖子
         deduped.append((title, url))
-        if end_ch > covered_until:
+        # 只有合理跨度的帖子才能更新覆盖范围
+        if span <= MAX_COVERAGE_SPAN and end_ch > covered_until:
             covered_until = end_ch
 
     # Step 4: 无编号章节按 tid 去重后保留
@@ -309,13 +328,11 @@ def smart_sort_posts(posts, index_links=None, index_tid=None, novel_name=""):
             if (title, url) not in existing:
                 special_posts.append((title, url, insert_after))
         else:
-            # 检查是否为小说相关章节
-            if "【" in title and "】" in title:
-                core = re.search(r"（(.+?)）", novel_name)
-                if core and core.group(1) in title:
-                    extra_special.append((title, url))
-                elif novel_name in title:
-                    extra_special.append((title, url))
+            # 检查是否为小说相关章节（放宽条件）
+            core = re.search(r"（(.+?)）", novel_name)
+            core_word = core.group(1) if core else novel_name
+            if core_word in title or novel_name in title:
+                extra_special.append((title, url))
 
     # ---- Step 4: 合并排序 ----
     result = []
