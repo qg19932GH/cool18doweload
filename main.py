@@ -206,6 +206,8 @@ class MainWindow(QMainWindow):
         self.post_list = QListWidget()
         self.post_list.setFont(QFont("Microsoft YaHei", 10))
         self.post_list.setDragEnabled(True)
+        self.post_list.setAcceptDrops(True)
+        self.post_list.setDropIndicatorShown(True)
         self.post_list.setDefaultDropAction(Qt.DropAction.MoveAction)
         list_layout.addWidget(self.post_list)
         layout.addLayout(list_layout, stretch=2)
