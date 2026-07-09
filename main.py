@@ -200,11 +200,13 @@ class MainWindow(QMainWindow):
         layout.addLayout(info_layout)
 
         list_layout = QVBoxLayout()
-        list_label = QLabel("帖子列表:")
+        list_label = QLabel("帖子列表（可拖拽排序）:")
         list_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
         list_layout.addWidget(list_label)
         self.post_list = QListWidget()
         self.post_list.setFont(QFont("Microsoft YaHei", 10))
+        self.post_list.setDragEnabled(True)
+        self.post_list.setDefaultDropAction(Qt.DropAction.MoveAction)
         list_layout.addWidget(self.post_list)
         layout.addLayout(list_layout, stretch=2)
 
@@ -322,9 +324,18 @@ class MainWindow(QMainWindow):
             except ValueError:
                 QMessageBox.warning(self, "提示", "代理端口必须是数字")
                 return
+
+        # 按列表当前顺序（用户可能拖拽过）读取帖子
+        posts_in_order = []
+        for i in range(self.post_list.count()):
+            item = self.post_list.item(i)
+            data = item.data(Qt.ItemDataRole.UserRole)
+            if data:
+                posts_in_order.append(data)
+
         self.post_list.clear()
         self.log_text.clear()
-        self._append_log("[信息] 开始下载全部帖子...")
+        self._append_log(f"[信息] 开始下载 {len(posts_in_order)} 个帖子...")
         if proxy_port:
             self._append_log(f"[信息] 已启用代理 127.0.0.1:{proxy_port}")
         self.download_btn.setEnabled(False)
@@ -332,7 +343,7 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(True)
         self.progress_bar.setValue(0)
         self.crawled_results = []
-        self.crawler_thread = CrawlerThread(mode="download", posts=self.posts, novel_name=self.novel_name, proxy_port=proxy_port)
+        self.crawler_thread = CrawlerThread(mode="download", posts=posts_in_order, novel_name=self.novel_name, proxy_port=proxy_port)
         self.crawler_thread.log_signal.connect(self._append_log)
         self.crawler_thread.progress_signal.connect(self._on_progress)
         self.crawler_thread.finished_signal.connect(self._on_download_finished)
