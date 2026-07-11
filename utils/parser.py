@@ -16,6 +16,7 @@ def get_page(url, timeout=15, proxy_port=None):
             "https": proxy_url,
         }
     resp = requests.get(**kwargs)
+    resp.raise_for_status()  # 抛出 HTTP 错误异常（如 403, 502 等）
     resp.encoding = "utf-8"
     return BeautifulSoup(resp.text, "html.parser")
 
@@ -136,12 +137,42 @@ def parse_search_results(soup, keywords):
 def extract_sort_key(title):
     """从标题中提取章节编号范围，返回 (起始章, 结束章)，无编号返回 (None, None)"""
     half = fullwidth_to_half(title)
+    
+    # 1. 带括号的范围，如 (64-66)
     match = re.search(r"[（(]\s*(\d+)\s*[-~～]+\s*(\d+)\s*[）)]", half)
     if match:
         return (int(match.group(1)), int(match.group(2)))
+        
+    # 2. 带括号的单章，如 (64)
     match = re.search(r"[（(]\s*(\d+)\s*[）)]", half)
     if match:
         return (int(match.group(1)), int(match.group(1)))
+        
+    # 3. “第X-Y章/回/话”
+    match = re.search(r"第\s*(\d+)\s*[-~～]+\s*(\d+)\s*[章回话]", half)
+    if match:
+        return (int(match.group(1)), int(match.group(2)))
+        
+    # 4. “第X章/回/话”
+    match = re.search(r"第\s*(\d+)\s*[章回话]", half)
+    if match:
+        return (int(match.group(1)), int(match.group(1)))
+        
+    # 5. 无括号的连字符范围，如 64-66，通常出现在标题末尾或独立位置
+    # 排除类似年份的数字 (例如 2023-2024)
+    match = re.search(r"(?:^|[\s【】()（）第])(\d+)\s*[-~～]+\s*(\d+)(?:$|[\s【】()（）章回话])", half)
+    if match:
+        s, e = int(match.group(1)), int(match.group(2))
+        if s < 1000 and e < 1000:
+            return (s, e)
+            
+    # 6. 无括号单章，如末尾的 64 或者“第64”
+    match = re.search(r"(?:^|[\s【】()（）第])(\d+)(?:$|[\s【】()（）章回话])", half)
+    if match:
+        val = int(match.group(1))
+        if val < 1000:  # 排除日期年份等
+            return (val, val)
+            
     return (None, None)
 
 

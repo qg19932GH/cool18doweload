@@ -18,7 +18,7 @@ from utils.downloader import search_and_find_posts, fetch_and_save_all
 class CrawlerThread(QThread):
     """后台爬取线程"""
     log_signal = pyqtSignal(str)
-    progress_signal = pyqtSignal(int, int)
+    progress_signal = pyqtSignal(int, int, bool)
     finished_signal = pyqtSignal(list, str, int)
     novel_info_signal = pyqtSignal(str, int, str)
 
@@ -103,7 +103,7 @@ class CrawlerThread(QThread):
                 self.log_signal.emit(f"[错误] 下载 {title[:50]} 失败: {str(e)}")
                 results.append((title, url, "", False))
 
-            self.progress_signal.emit(i, total)
+            self.progress_signal.emit(i, total, success)
             if i < total:
                 time.sleep(2)
 
@@ -336,6 +336,11 @@ class MainWindow(QMainWindow):
                 posts_in_order.append(data)
 
         self.post_list.clear()
+        for idx, (title, url) in enumerate(posts_in_order, 1):
+            item = QListWidgetItem(f"[{idx:02d}] {title[:70]} [等待中]")
+            item.setData(Qt.ItemDataRole.UserRole, (title, url))
+            self.post_list.addItem(item)
+
         self.log_text.clear()
         self._append_log(f"[信息] 开始下载 {len(posts_in_order)} 个帖子...")
         if proxy_port:
@@ -351,17 +356,21 @@ class MainWindow(QMainWindow):
         self.crawler_thread.finished_signal.connect(self._on_download_finished)
         self.crawler_thread.start()
 
-    def _on_progress(self, current, total):
+    def _on_progress(self, current, total, success):
         pct = int(current / total * 100)
         self.progress_bar.setValue(pct)
         self.progress_bar.setFormat(f"{current}/{total} ({pct}%)")
 
-        if self.post_list.count() == 0:
-            for idx in range(current):
-                if idx < len(self.posts):
-                    title = self.posts[idx][0]
-                    item = QListWidgetItem(f"[{idx+1:02d}] {title[:70]} [已下载]")
-                    self.post_list.addItem(item)
+        idx = current - 1
+        if 0 <= idx < self.post_list.count():
+            item = self.post_list.item(idx)
+            data = item.data(Qt.ItemDataRole.UserRole)
+            title = data[0] if data else item.text()
+            short_title = title[:70]
+            status = "[已下载]" if success else "[失败]"
+            item.setText(f"[{current:02d}] {short_title} {status}")
+            color = QColor("#4caf50") if success else QColor("#f44336")
+            item.setForeground(color)
 
     def _on_download_finished(self, results, filepath, file_size):
         self.crawled_results = results

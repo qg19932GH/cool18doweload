@@ -74,14 +74,19 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2, prox
     if log_callback:
         log_callback(f"  正在检测索引帖（共 {len(all_results)} 个帖子）...")
 
-    # 索引帖特征：章节起始号最小（最早发布）且包含大量其他章节链接
-    # 按起始章节号排序，优先检查早期帖子
+    # 索引帖特征：含有目录/索引关键字，或者章节范围跨度最大，且起始章节最小
     def index_priority(title):
         """返回优先级（越小越优先）"""
+        index_keywords = ["索引", "目录", "合集", "汇总", "大合集", "全文"]
+        has_keyword = any(kw in title for kw in index_keywords)
+        keyword_score = 0 if has_keyword else 1
+
         s, e = extract_sort_key(title)
-        if s is not None:
-            return (0, s)  # 有编号的，按起始章节排序
-        return (1, 0)  # 无编号的放后面
+        if s is not None and e is not None:
+            span = e - s
+            # 跨度越大的合集/索引帖越优先（在 keyword_score 相同情况下，-span 越小代表跨度越大）
+            return (keyword_score, -span, s)
+        return (keyword_score + 1, 0, 0)
 
     sorted_candidates = sorted(all_results, key=lambda x: index_priority(x[0]))
 
@@ -93,12 +98,16 @@ def search_and_find_posts(novel_name, keywords, log_callback=None, delay=2, prox
     index_tid = None
     best_count = 0
 
-    for title, url in sorted_candidates:
+    for idx, (title, url) in enumerate(sorted_candidates):
         # 已找到包含大量章节的索引帖，后续不再检查
         if best_count >= 10:
             if log_callback:
                 log_callback(f"  索引帖已足够完整（{best_count} 章），跳过剩余候选")
             break
+
+        # 限制请求频次：从第二个嗅探请求开始，每次请求前休眠 1 秒
+        if idx > 0:
+            time.sleep(1)
 
         try:
             soup = get_page(url, proxy_port=proxy_port)
